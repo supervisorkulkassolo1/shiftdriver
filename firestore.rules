@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Outlets - read public, write restricted (handled by app logic)
+    match /outlets/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // SPV accounts - only read for login check
+    match /spv/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Drivers - read/write for app
+    match /drivers/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Shift types
+    match /shiftTypes/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Batches - read/write for app (transaction-protected in code)
+    match /batches/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Submissions/locks
+    match /submissions/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
