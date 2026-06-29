@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { getDrivers, getOutlets, addDriver, deleteDriver, toggleDriverActive, updateDriver, importDriversFromCSV, parseCSV } from '../../lib/db'
 import { showToast } from '../../lib/toast'
+import { downloadTemplate } from '../../lib/csvTemplates'
 
 export default function SpvDrivers() {
   const [drivers, setDrivers] = useState([])
@@ -145,12 +146,11 @@ export default function SpvDrivers() {
           <div className="card-title" style={{ marginBottom: 4 }}>Import Driver dari CSV</div>
           <div className="card-sub" style={{ marginBottom: 12 }}>Format kolom: <strong>name, nip, whatsapp</strong></div>
 
-          <div className="alert alert-blue" style={{ marginBottom: 10 }}>
-            <span>Contoh isi CSV:<br />
-              <code style={{ fontSize: 10 }}>name,nip,whatsapp<br />
-              Budi Santoso,NIP001,628111222333<br />
-              Citra Dewi,NIP002,628222333444</code>
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, padding: '9px 11px', background: 'var(--blue-light)', border: '1px solid #B5D4F4', borderRadius: 7 }}>
+            <span style={{ fontSize: 11, color: 'var(--blue-dark)' }}>Format: <strong>name, nip, whatsapp</strong><br />Kolom wajib: name</span>
+            <button className="btn btn-sm" style={{ flexShrink: 0, marginLeft: 10 }} onClick={() => downloadTemplate('driver')}>
+              ⬇️ Template
+            </button>
           </div>
 
           <div className="field">
