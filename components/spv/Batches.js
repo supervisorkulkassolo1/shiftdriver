@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { getOutlets, getShiftTypes, getBatches, createBatch, closeBatch, batchToCSV } from '../../lib/db'
+import { useEffect, useState, useRef } from 'react'
+import { getOutlets, getShiftTypes, getBatches, createBatch, closeBatch, batchToCSV, parseBatchCSV, parseCSV } from '../../lib/db'
 import { showToast } from '../../lib/toast'
 import { format, eachDayOfInterval, parseISO } from 'date-fns'
 import { id as idLocale } from 'date-fns/locale'
@@ -14,10 +14,12 @@ export default function SpvBatches() {
   const [showCreate, setShowCreate] = useState(false)
   const [step, setStep] = useState(0)
   const [view, setView] = useState(null)
+  const [useCSVImport, setUseCSVImport] = useState(false)
+  const [csvImportPreview, setCsvImportPreview] = useState([])
+  const [csvImportErrors, setCsvImportErrors] = useState([])
+  const fileRef = useRef()
 
-  const [form, setForm] = useState({
-    outletId: '', label: '', startDate: '', endDate: '', windowOpen: '', windowClose: ''
-  })
+  const [form, setForm] = useState({ outletId: '', label: '', startDate: '', endDate: '', windowOpen: '', windowClose: '' })
   const [selectedShifts, setSelectedShifts] = useState({})
   const [capOverride, setCapOverride] = useState({})
   const [selCapDay, setSelCapDay] = useState(null)
@@ -62,26 +64,42 @@ export default function SpvBatches() {
     setCapOverride(prev => ({ ...prev, [date + '|' + shiftId]: val }))
   }
 
+  // Handle CSV import for batch slots
+  function handleBatchCSVFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const { slots, errors } = parseBatchCSV(ev.target.result, shiftTypes)
+      setCsvImportPreview(slots)
+      setCsvImportErrors(errors)
+    }
+    reader.readAsText(file)
+  }
+
   function goStep1() {
     if (!form.label.trim()) { showToast('Isi label batch dulu', 'error'); return }
-    if (!form.startDate || !form.endDate) { showToast('Pilih tanggal mulai dan selesai', 'error'); return }
+    if (!form.startDate || !form.endDate) { showToast('Pilih tanggal', 'error'); return }
     if (!form.windowOpen || !form.windowClose) { showToast('Isi window buka dan tutup', 'error'); return }
     setSelectedShifts({})
+    setCsvImportPreview([])
+    setCsvImportErrors([])
+    setUseCSVImport(false)
     setStep(1)
   }
 
-  function goStep2() {
+  function goStep2Manual() {
     const active = Object.keys(selectedShifts)
     if (!active.length) { showToast('Pilih minimal 1 shift', 'error'); return }
     const noDefault = active.some(id => !selectedShifts[id].defaultCap || parseInt(selectedShifts[id].defaultCap) < 1)
-    if (noDefault) { showToast('Isi kapasitas default untuk semua shift yang dipilih', 'error'); return }
+    if (noDefault) { showToast('Isi kapasitas default semua shift yang dipilih', 'error'); return }
     const dates = getDates()
     if (dates.length) setSelCapDay(format(dates[0], 'yyyy-MM-dd'))
     setCapOverride({})
     setStep(2)
   }
 
-  async function handleCreate() {
+  async function handleCreateManual() {
     const dates = getDates()
     const activeShifts = shiftTypes.filter(s => selectedShifts[s.id])
     const slots = []
@@ -90,27 +108,26 @@ export default function SpvBatches() {
       activeShifts.forEach(s => {
         const cap = parseInt(getCapVal(dateStr, s.id) || 0)
         if (cap > 0) {
-          slots.push({
-            key: dateStr + '_' + s.id,
-            shiftTypeId: s.id,
-            date: dateStr,
-            capacity: cap,
-            filled: 0,
-            drivers: [],
-            driverNames: [],
-            bookings: []
-          })
+          slots.push({ key: dateStr + '_' + s.id, shiftTypeId: s.id, date: dateStr, capacity: cap, filled: 0, drivers: [], driverNames: [], bookings: [] })
         }
       })
     })
-    if (!slots.length) { showToast('Tidak ada slot aktif. Cek kapasitas.', 'error'); return }
+    if (!slots.length) { showToast('Tidak ada slot aktif', 'error'); return }
+    await submitBatch(slots)
+  }
+
+  async function handleCreateFromCSV() {
+    if (!csvImportPreview.length) { showToast('Upload CSV dulu', 'error'); return }
+    if (csvImportErrors.length) { showToast('Ada error di CSV, perbaiki dulu', 'error'); return }
+    await submitBatch(csvImportPreview)
+  }
+
+  async function submitBatch(slots) {
     try {
       await createBatch({ ...form, outletId: selectedOutlet, slots })
       showToast('Batch berhasil dibuat! 🚀', 'success')
-      setShowCreate(false)
-      setStep(0)
-      setSelectedShifts({})
-      setCapOverride({})
+      setShowCreate(false); setStep(0); setSelectedShifts({}); setCapOverride({})
+      setCsvImportPreview([]); setCsvImportErrors([])
       setForm(f => ({ ...f, label: '', startDate: '', endDate: '', windowOpen: '', windowClose: '' }))
       await loadBatches()
     } catch (err) { showToast('Gagal: ' + err.message, 'error') }
@@ -132,12 +149,12 @@ export default function SpvBatches() {
   async function handleClose(id) {
     if (!confirm('Tutup batch ini?')) return
     try { await closeBatch(id); await loadBatches(); showToast('Batch ditutup', 'success') }
-    catch { showToast('Gagal menutup batch', 'error') }
+    catch { showToast('Gagal', 'error') }
   }
 
   function downloadCSV(batch) {
     const csv = batchToCSV(batch, outlets, shiftTypes)
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -147,6 +164,7 @@ export default function SpvBatches() {
     showToast('CSV didownload', 'success')
   }
 
+  // ─── DETAIL VIEW ─────────────────────────────────────────────────────────────
   if (view) {
     const slotsByDate = {}
     view.slots.forEach(s => {
@@ -163,7 +181,7 @@ export default function SpvBatches() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {view.status === 'open' && <button className="btn btn-danger btn-sm" onClick={() => { handleClose(view.id); setView(null) }}>Tutup Batch</button>}
-            <button className="btn btn-success btn-sm" onClick={() => downloadCSV(view)}>⬇️ CSV</button>
+            <button className="btn btn-success btn-sm" onClick={() => downloadCSV(view)}>⬇️ Export CSV</button>
           </div>
         </div>
         {Object.entries(slotsByDate).sort().map(([date, slots]) => (
@@ -183,7 +201,7 @@ export default function SpvBatches() {
                   </div>
                   {(s.bookings || []).map(b => (
                     <div key={b.driverId} style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
-                      • {b.driverName} <span style={{ color: 'var(--text-3)' }}>({new Date(b.timestamp).toLocaleTimeString('id-ID')})</span>
+                      • {b.driverName} {b.driverNip ? `(${b.driverNip})` : ''} <span style={{ color: 'var(--text-3)' }}>({new Date(b.timestamp).toLocaleTimeString('id-ID')})</span>
                     </div>
                   ))}
                 </div>
@@ -195,6 +213,7 @@ export default function SpvBatches() {
     )
   }
 
+  // ─── CREATE FORM ─────────────────────────────────────────────────────────────
   if (showCreate) {
     const dates = getDates()
     const activeShiftList = shiftTypes.filter(s => selectedShifts[s.id])
@@ -202,7 +221,9 @@ export default function SpvBatches() {
     return (
       <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <button className="btn btn-sm" onClick={() => { if (step === 0) { setShowCreate(false) } else setStep(s => s - 1) }}>← {step === 0 ? 'Batal' : 'Kembali'}</button>
+          <button className="btn btn-sm" onClick={() => { if (step === 0) setShowCreate(false); else setStep(s => s - 1) }}>
+            ← {step === 0 ? 'Batal' : 'Kembali'}
+          </button>
           <div style={{ display: 'flex', gap: 6, flex: 1, alignItems: 'center' }}>
             {STEPS.map((s, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, flex: i < 2 ? 1 : 'none' }}>
@@ -219,6 +240,7 @@ export default function SpvBatches() {
           </div>
         </div>
 
+        {/* STEP 0: INFO */}
         {step === 0 && (
           <>
             <div className="card">
@@ -231,7 +253,7 @@ export default function SpvBatches() {
               </div>
               <div className="field">
                 <label className="label">Label Batch</label>
-                <input className="input" placeholder="Contoh: Minggu 29 Jun – 5 Jul" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
+                <input className="input" placeholder="Minggu 29 Jun – 5 Jul" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <div className="field"><label className="label">Tgl Mulai</label><input className="input" type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} /></div>
@@ -244,62 +266,116 @@ export default function SpvBatches() {
           </>
         )}
 
+        {/* STEP 1: PILIH SHIFT atau IMPORT CSV */}
         {step === 1 && (
           <>
-            <div className="alert alert-blue" style={{ marginBottom: 10 }}>
-              Pilih shift yang aktif untuk batch ini, lalu isi kapasitas default per hari.
+            {/* Toggle manual / CSV */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <button className={`btn ${!useCSVImport ? 'btn-primary' : ''}`} style={{ flex: 1 }} onClick={() => setUseCSVImport(false)}>
+                ✋ Setup Manual
+              </button>
+              <button className={`btn ${useCSVImport ? 'btn-primary' : ''}`} style={{ flex: 1 }} onClick={() => setUseCSVImport(true)}>
+                📥 Import CSV
+              </button>
             </div>
-            <div className="card">
-              <div className="card-header">
-                <div><div className="card-title">Shift Tersedia</div><div className="card-sub">{outlets.find(o => o.id === selectedOutlet)?.name}</div></div>
-              </div>
-              {shiftTypes.length === 0 && (
-                <div className="empty-state"><div className="empty-icon">🕐</div>Belum ada shift di outlet ini. Setup shift dulu di tab Shift.</div>
-              )}
-              {shiftTypes.map(s => {
-                const isSelected = !!selectedShifts[s.id]
-                return (
-                  <div key={s.id} onClick={() => toggleShift(s.id)} style={{
-                    border: `1px solid ${isSelected ? '#185FA5' : 'var(--border)'}`,
-                    borderRadius: 8, padding: '10px 12px', marginBottom: 8, cursor: 'pointer',
-                    background: isSelected ? '#E6F1FB' : 'var(--surface)', transition: 'all .15s'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{s.startTime} – {s.endTime}</div>
-                      </div>
-                      <span style={{ fontSize: 18 }}>{isSelected ? '✅' : '⬜'}</span>
-                    </div>
-                    {isSelected && (
-                      <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #B5D4F4' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <label style={{ fontSize: 12, color: '#0C447C', flex: 1 }}>Kapasitas default (driver/hari)</label>
-                          <input
-                            className="input"
-                            type="number" min="1" placeholder="3"
-                            style={{ width: 64, textAlign: 'center', margin: 0 }}
-                            value={selectedShifts[s.id]?.defaultCap || ''}
-                            onChange={e => setDefaultCap(s.id, e.target.value)}
-                          />
-                        </div>
-                        <div style={{ fontSize: 11, color: '#185FA5', marginTop: 6 }}>
-                          Nilai ini jadi kapasitas awal semua hari. Bisa diubah per hari di langkah berikutnya.
-                        </div>
-                      </div>
-                    )}
+
+            {!useCSVImport ? (
+              <>
+                <div className="alert alert-blue" style={{ marginBottom: 10 }}>
+                  Pilih shift aktif untuk batch ini, lalu isi kapasitas default per hari.
+                </div>
+                <div className="card">
+                  <div className="card-header">
+                    <div><div className="card-title">Shift Tersedia</div><div className="card-sub">{outlets.find(o => o.id === selectedOutlet)?.name}</div></div>
                   </div>
-                )
-              })}
-            </div>
-            <button className="btn btn-primary btn-block" onClick={goStep2}>Lanjut: Atur Kapasitas per Hari →</button>
+                  {shiftTypes.length === 0 && <div className="empty-state"><div className="empty-icon">🕐</div>Belum ada shift. Setup di tab Shift dulu.</div>}
+                  {shiftTypes.map(s => {
+                    const isSelected = !!selectedShifts[s.id]
+                    return (
+                      <div key={s.id} onClick={() => toggleShift(s.id)} style={{
+                        border: `1px solid ${isSelected ? '#185FA5' : 'var(--border)'}`,
+                        borderRadius: 8, padding: '10px 12px', marginBottom: 8, cursor: 'pointer',
+                        background: isSelected ? '#E6F1FB' : 'var(--surface)', transition: 'all .15s'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{s.startTime} – {s.endTime}</div>
+                          </div>
+                          <span style={{ fontSize: 18 }}>{isSelected ? '✅' : '⬜'}</span>
+                        </div>
+                        {isSelected && (
+                          <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #B5D4F4' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label style={{ fontSize: 12, color: '#0C447C', flex: 1 }}>Kapasitas default (driver/hari)</label>
+                              <input className="input" type="number" min="1" placeholder="3" style={{ width: 64, textAlign: 'center', margin: 0 }}
+                                value={selectedShifts[s.id]?.defaultCap || ''}
+                                onChange={e => setDefaultCap(s.id, e.target.value)} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                <button className="btn btn-primary btn-block" onClick={goStep2Manual}>Lanjut: Atur Kapasitas per Hari →</button>
+              </>
+            ) : (
+              <>
+                <div className="card">
+                  <div className="card-title" style={{ marginBottom: 4 }}>Import Slot dari CSV</div>
+                  <div className="card-sub" style={{ marginBottom: 12 }}>Format kolom: <strong>tanggal, nama_shift, kapasitas</strong></div>
+                  <div className="alert alert-blue" style={{ marginBottom: 10 }}>
+                    <span>Contoh:<br />
+                      <code style={{ fontSize: 10 }}>tanggal,nama_shift,kapasitas<br />
+                      2025-06-29,Pagi,3<br />
+                      2025-06-29,Siang,5<br />
+                      2025-06-30,Pagi,3</code><br /><br />
+                      ⚠️ nama_shift harus sama persis dengan shift yang sudah disetup di outlet ini.
+                    </span>
+                  </div>
+                  <div className="field">
+                    <label className="label">Upload file CSV</label>
+                    <input ref={fileRef} type="file" accept=".csv" className="input" style={{ padding: 6 }} onChange={handleBatchCSVFile} />
+                  </div>
+
+                  {csvImportErrors.length > 0 && (
+                    <div className="alert alert-red" style={{ marginBottom: 10, flexDirection: 'column', gap: 4 }}>
+                      <strong>❌ {csvImportErrors.length} error ditemukan:</strong>
+                      {csvImportErrors.map((e, i) => <div key={i} style={{ fontSize: 11 }}>• {e}</div>)}
+                    </div>
+                  )}
+
+                  {csvImportPreview.length > 0 && !csvImportErrors.length && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8, color: 'var(--text-2)' }}>Preview ({csvImportPreview.length} slot):</div>
+                      {csvImportPreview.slice(0, 6).map((s, i) => {
+                        const st = shiftTypes.find(t => t.id === s.shiftTypeId)
+                        return (
+                          <div key={i} className="row-item">
+                            <div><div className="row-title">{s.date} — {st?.name}</div><div className="row-sub">Kapasitas: {s.capacity} driver</div></div>
+                            <span className="badge badge-green">✓</span>
+                          </div>
+                        )
+                      })}
+                      {csvImportPreview.length > 6 && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6 }}>...dan {csvImportPreview.length - 6} slot lainnya</div>}
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-primary btn-block" onClick={handleCreateFromCSV}
+                  disabled={!csvImportPreview.length || csvImportErrors.length > 0}>
+                  🚀 Buat Batch dari CSV ({csvImportPreview.length} slot)
+                </button>
+              </>
+            )}
           </>
         )}
 
+        {/* STEP 2: KAPASITAS PER HARI (manual only) */}
         {step === 2 && (
           <>
             <div className="alert alert-blue" style={{ marginBottom: 10 }}>
-              Kapasitas terisi dari default. Ubah jika hari tertentu butuh jumlah berbeda, atau ketik 0 untuk menutup slot.
+              Ubah jika hari tertentu beda kebutuhannya. Ketik 0 = slot tutup hari itu.
             </div>
             <div className="card">
               <div className="card-title" style={{ marginBottom: 10 }}>Kapasitas per Hari</div>
@@ -321,13 +397,9 @@ export default function SpvBatches() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 11, color: 'var(--text-2)' }}>driver:</span>
-                    <input
-                      className="input"
-                      type="number" min="0"
-                      style={{ width: 64, textAlign: 'center', margin: 0 }}
+                    <input className="input" type="number" min="0" style={{ width: 64, textAlign: 'center', margin: 0 }}
                       value={getCapVal(selCapDay, s.id)}
-                      onChange={e => setCapVal(selCapDay, s.id, e.target.value)}
-                    />
+                      onChange={e => setCapVal(selCapDay, s.id, e.target.value)} />
                   </div>
                 </div>
               ))}
@@ -338,18 +410,19 @@ export default function SpvBatches() {
                 <>
                   <div className="row-item"><span style={{ fontSize: 13 }}>Outlet</span><span style={{ fontWeight: 500 }}>{outlets.find(o => o.id === selectedOutlet)?.name}</span></div>
                   <div className="row-item"><span style={{ fontSize: 13 }}>Shift aktif</span><span>{activeShifts} shift</span></div>
-                  <div className="row-item"><span style={{ fontSize: 13 }}>Total slot dibuka</span><span><strong>{totalSlots}</strong></span></div>
-                  <div className="row-item"><span style={{ fontSize: 13 }}>Total kapasitas driver</span><span><strong>{totalDriverSlots}</strong></span></div>
+                  <div className="row-item"><span style={{ fontSize: 13 }}>Total slot dibuka</span><strong>{totalSlots}</strong></div>
+                  <div className="row-item"><span style={{ fontSize: 13 }}>Total kapasitas</span><strong>{totalDriverSlots} driver-slot</strong></div>
                 </>
               )})()}
             </div>
-            <button className="btn btn-primary btn-block" onClick={handleCreate}>🚀 Buat Batch Jadwal</button>
+            <button className="btn btn-primary btn-block" onClick={handleCreateManual}>🚀 Buat Batch Jadwal</button>
           </>
         )}
       </>
     )
   }
 
+  // ─── BATCH LIST ───────────────────────────────────────────────────────────────
   return (
     <>
       <div className="card">
@@ -361,7 +434,7 @@ export default function SpvBatches() {
         </div>
         <button className="btn btn-primary btn-block" onClick={() => { setShowCreate(true); setStep(0) }}>+ Buat Batch Jadwal</button>
       </div>
-      {batches.length === 0 && <div className="empty-state"><div className="empty-icon">📅</div>Belum ada batch untuk outlet ini</div>}
+      {batches.length === 0 && <div className="empty-state"><div className="empty-icon">📅</div>Belum ada batch</div>}
       {batches.map(b => {
         const total = b.slots.length
         const filled = b.slots.filter(s => s.filled >= s.capacity).length
