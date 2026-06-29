@@ -81,7 +81,7 @@ export default function DriverSchedule({ user }) {
     if (booking) return
     setBooking(true)
     try {
-      await bookSlot(batch.id, slot.key, user.id, user.name)
+      await bookSlot(batch.id, slot.key, user.id, user.name, user.nip || "")
       showToast('Shift berhasil dipilih! ✅', 'success')
     } catch (err) {
       showToast(err.message, 'error')
