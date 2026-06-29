@@ -3,6 +3,7 @@ import { getOutlets, getShiftTypes, getBatches, createBatch, closeBatch, batchTo
 import { showToast } from '../../lib/toast'
 import { format, eachDayOfInterval, parseISO } from 'date-fns'
 import { id as idLocale } from 'date-fns/locale'
+import { downloadTemplate } from '../../lib/csvTemplates'
 
 const STEPS = ['Info Batch', 'Pilih Shift', 'Kapasitas per Hari']
 
@@ -325,14 +326,15 @@ export default function SpvBatches() {
                 <div className="card">
                   <div className="card-title" style={{ marginBottom: 4 }}>Import Slot dari CSV</div>
                   <div className="card-sub" style={{ marginBottom: 12 }}>Format kolom: <strong>tanggal, nama_shift, kapasitas</strong></div>
-                  <div className="alert alert-blue" style={{ marginBottom: 10 }}>
-                    <span>Contoh:<br />
-                      <code style={{ fontSize: 10 }}>tanggal,nama_shift,kapasitas<br />
-                      2025-06-29,Pagi,3<br />
-                      2025-06-29,Siang,5<br />
-                      2025-06-30,Pagi,3</code><br /><br />
-                      ⚠️ nama_shift harus sama persis dengan shift yang sudah disetup di outlet ini.
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10, padding: '9px 11px', background: 'var(--blue-light)', border: '1px solid #B5D4F4', borderRadius: 7 }}>
+                    <span style={{ fontSize: 11, color: 'var(--blue-dark)' }}>
+                      Format: <strong>tanggal, nama_shift, kapasitas</strong><br />
+                      Tanggal: YYYY-MM-DD<br />
+                      ⚠️ nama_shift harus sama persis dengan shift yang disetup di outlet ini
                     </span>
+                    <button className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => downloadTemplate('batch')}>
+                      ⬇️ Template
+                    </button>
                   </div>
                   <div className="field">
                     <label className="label">Upload file CSV</label>
