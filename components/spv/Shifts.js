@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { getOutlets, getShiftTypes, addShiftType, updateShiftType, deleteShiftType, importShiftTypesFromCSV, parseCSV } from '../../lib/db'
 import { showToast } from '../../lib/toast'
+import { downloadTemplate } from '../../lib/csvTemplates'
 
 export default function SpvShifts() {
   const [outlets, setOutlets] = useState([])
@@ -119,13 +120,11 @@ export default function SpvShifts() {
         <div className="card">
           <div className="card-title" style={{ marginBottom: 4 }}>Import Shift dari CSV</div>
           <div className="card-sub" style={{ marginBottom: 12 }}>Format kolom: <strong>name, startTime, endTime</strong></div>
-          <div className="alert alert-blue" style={{ marginBottom: 10 }}>
-            <span>Contoh:<br />
-              <code style={{ fontSize: 10 }}>name,startTime,endTime<br />
-              Pagi,06:00,12:00<br />
-              Siang,12:00,18:00<br />
-              Malam,18:00,00:00</code>
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, padding: '9px 11px', background: 'var(--blue-light)', border: '1px solid #B5D4F4', borderRadius: 7 }}>
+            <span style={{ fontSize: 11, color: 'var(--blue-dark)' }}>Format: <strong>name, startTime, endTime</strong><br />Semua kolom wajib diisi</span>
+            <button className="btn btn-sm" style={{ flexShrink: 0, marginLeft: 10 }} onClick={() => downloadTemplate('shift')}>
+              ⬇️ Template
+            </button>
           </div>
           <div className="field">
             <label className="label">Upload file CSV</label>
